@@ -33,6 +33,9 @@ env/
 .streamlit/*
 !.streamlit/config.toml
 
+# CatBoost info
+catboost_info/
+
 # OS
 .DS_Store
 Thumbs.db

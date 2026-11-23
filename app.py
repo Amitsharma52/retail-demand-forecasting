@@ -1,15 +1,18 @@
 """
-app.py — AI-Based Retail Demand Forecasting & Replenishment Decision System.
-"Enterprise-Grade Retail Demand Forecasting, Conformal Uncertainty Calibration, and Procurement Decision Microservice."
+app.py — AI-Based Retail Demand Forecasting, Inventory Optimization, and Explainable AI Decision-Support System.
+"Research-Grade Enterprise Retail Intelligence, Probabilistic Inventory Optimization & Explainable AI Decision Microservice."
 
-Commercial & Shopkeeper-friendly interface maintaining:
-- Machine Learning Forecasting (LightGBM & XGBoost Quantile Regressors)
+Features:
+- Multi-Model Quantile Ensembles (LightGBM + XGBoost + CatBoost + Seasonal Naive)
+- Dynamic Validation-Weighted Ensemble with Inverse Loss Optimization
 - Finite-Sample Conformalized Quantile Regression (CQR) Calibration
-- Deterministic Multi-Echelon Inventory Replenishment Logic
-- Supplier Purchase Order Generation (Case-pack rounding, MOQ, ReportLab PDF / CSV)
+- Probabilistic Inventory Optimization: Tail Stockout Risk P(Demand > I_pos), Expected Fill Rate, Overstock Expectation
+- ABC-XYZ 9-Box Portfolio Segmentation with Strategy Recommendations
+- Real-Time Model Drift & Covariate Shift Monitoring (Population Stability Index PSI, KS-test, Tracking Signal)
+- Commercial Supplier Purchase Order Engine (Case Pack Rounding, MOQ, ReportLab PDF / CSV)
 - Historical Inventory Policy Simulator & Financial Backtesting
-- Custom Merchant POS Data Ingestion & Health Auditor
-- Game-Theoretic TreeSHAP Explainability & Rationale Generation
+- Custom Merchant POS Ingestion Pipeline & Diagnostic Health Auditor
+- Game-Theoretic TreeSHAP Explainability & Grounded Plain-Language Rationales
 - Production REST API Microservice Integration
 """
 
@@ -81,6 +84,27 @@ from src.custom_data import (
     generate_custom_features,
     identify_columns,
 )
+from src.segmentation import (
+    classify_abc_xyz,
+    generate_segmentation_matrix_summary,
+    SEGMENT_POLICIES,
+)
+from src.probabilistic_inventory import (
+    ProbabilisticInventoryInputs,
+    compute_probabilistic_inventory,
+)
+from src.drift_monitor import (
+    audit_dataset_drift,
+    calculate_psi,
+    calculate_tracking_signal,
+)
+from src.forecasting_ensemble import (
+    HybridQuantileEnsemble,
+    CATBOOST_AVAILABLE,
+)
+from src.feature_selection import (
+    run_automated_feature_selection,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -124,7 +148,7 @@ st.markdown("""
     .block-container {
         padding-top: 1.5rem !important;
         padding-bottom: 2.5rem !important;
-        max-width: 1160px;
+        max-width: 1180px;
     }
     
     /* Sidebar container styling */
@@ -154,7 +178,7 @@ st.markdown("""
         font-weight: 700 !important;
     }
     [data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] {
-        gap: 0.2rem !important;
+        gap: 0.15rem !important;
     }
 
     /* Clean Cards */
@@ -239,6 +263,17 @@ st.markdown("""
         border-radius: 6px;
         text-transform: uppercase;
     }
+    .sw-badge-red {
+        display: inline-block;
+        background-color: #FDF2F2;
+        color: #D94F45;
+        border: 1px solid #F8D7D5;
+        font-size: 0.72rem;
+        font-weight: 700;
+        padding: 0.2rem 0.55rem;
+        border-radius: 6px;
+        text-transform: uppercase;
+    }
     .sw-badge-blue {
         display: inline-block;
         background-color: #EDF2FD;
@@ -316,7 +351,6 @@ def get_data() -> tuple[pd.DataFrame, dict, str]:
         except Exception as exc:
             st.error(f"Failed to load Kaggle data: {exc}")
 
-    # Fallback to demo sample
     df = generate_sample_train()
     meta = {
         "stores": config.SAMPLE_STORES,
@@ -346,7 +380,7 @@ df, meta, data_source = get_data()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Session State Initialization (Persistent across screens)
+# Session State Initialization
 # ══════════════════════════════════════════════════════════════════════════════
 
 if "nav_page" not in st.session_state:
@@ -370,7 +404,6 @@ if "lead_time" not in st.session_state:
 if "service_level" not in st.session_state:
     st.session_state.service_level = 0.95
 
-# Commercial PO Settings in Session State
 if "pack_size" not in st.session_state:
     st.session_state.pack_size = 12
 
@@ -392,7 +425,7 @@ with st.sidebar:
     st.markdown("""
     <div style="padding: 0.4rem 0 0.8rem 0;">
         <div style="font-size: 1.25rem; font-weight: 800; color: #287A50; letter-spacing: -0.02em; line-height: 1.25;">🛒 AI-Based Retail Demand Forecasting</div>
-        <div style="font-size: 0.8rem; color: #70796F; font-weight: 500; margin-top: 0.2rem;">Commercial Inventory Decision Engine</div>
+        <div style="font-size: 0.8rem; color: #70796F; font-weight: 500; margin-top: 0.2rem;">Inventory Intelligence & XAI Decision Platform</div>
     </div>
     """, unsafe_allow_html=True)
     
@@ -400,22 +433,25 @@ with st.sidebar:
     
     nav_options = [
         "Home",
-        "Inventory",
+        "Inventory & Risk",
         "Order Suggestions & PO",
+        "ABC-XYZ Segmentation",
         "Policy Simulator",
+        "Model Drift & Monitor",
         "Custom Store Upload",
         "Sales Trends",
         "Advanced Analytics",
         "Settings & API Microservice",
     ]
     
-    # Custom Radio navigation with icons
     def nav_format(opt):
         icons = {
             "Home": "🏠 Home",
-            "Inventory": "📦 Inventory",
+            "Inventory & Risk": "📦 Inventory & Risk",
             "Order Suggestions & PO": "📋 Order Suggestions & PO",
+            "ABC-XYZ Segmentation": "📊 ABC-XYZ Segmentation",
             "Policy Simulator": "⚡ Policy Simulator",
+            "Model Drift & Monitor": "🛡️ Model Drift & Monitor",
             "Custom Store Upload": "📂 Custom Store Upload",
             "Sales Trends": "📈 Sales Trends",
             "Advanced Analytics": "🔬 Advanced Analytics",
@@ -434,7 +470,6 @@ with st.sidebar:
 
     st.markdown("---")
     
-    # Active Selection Summary
     stores = sorted(df["store_nbr"].unique().tolist())
     families = sorted(df["family"].unique().tolist())
 
@@ -459,13 +494,12 @@ with st.sidebar:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Shared Computations (Forecast & Inventory Engine)
+# Shared Computations (Forecast, Probabilistic Inventory, and Risk Engine)
 # ══════════════════════════════════════════════════════════════════════════════
 
 sel_store = st.session_state.sel_store
 sel_family = st.session_state.sel_family
 
-# Calculate protection horizon & forecast
 H = int(st.session_state.review_period + st.session_state.lead_time)
 calc_horizon = max(H, 7)
 
@@ -488,37 +522,36 @@ try:
     )
     base_df = seasonal_naive_forecast(df, sel_store, sel_family, horizon=calc_horizon)
 
-    inv_inputs = InventoryInputs(
+    # Probabilistic Inventory Calculations
+    prob_inputs = ProbabilisticInventoryInputs(
         on_hand=st.session_state.on_hand,
         on_order=st.session_state.on_order,
         backorders=st.session_state.backorders,
         review_period=st.session_state.review_period,
         lead_time=st.session_state.lead_time,
-        service_level=st.session_state.service_level,
+        target_service_level=st.session_state.service_level,
+        unit_cost=st.session_state.unit_cost,
+        selling_price=st.session_state.unit_cost * 1.6,
     )
-    inv_res = compute_inventory(inv_inputs, fc_df)
+    prob_res = compute_probabilistic_inventory(prob_inputs, fc_df)
     
-    # 7-day predicted volume estimate for summary cards
     seven_day_demand = float(fc_df["pred_q50"].iloc[:7].sum())
-
-    # Days of inventory remaining
-    daily_rate = max(0.1, inv_res.median_demand_H / max(1, inv_res.protection_horizon))
+    daily_rate = max(0.1, prob_res.expected_demand_horizon_DH / max(1, prob_res.protection_horizon_H))
     days_remaining = round(st.session_state.on_hand / daily_rate, 1)
-    
+
 except Exception as err:
     st.error(f"Error computing store forecasts: {err}")
     st.stop()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SCREEN 1: Home — "Your Shop at a Glance"
+# SCREEN 1: Home — Operational Posture & Risk Alerts
 # ══════════════════════════════════════════════════════════════════════════════
 
 if st.session_state.nav_page == "Home":
-    st.markdown('<div class="sw-page-title">Operational Overview</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sw-page-subtitle">Real-time inventory posture, upcoming demand, and procurement action items.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sw-page-title">Operational Posture & Inventory Intelligence</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sw-page-subtitle">Real-time stock posture, tail stockout probabilities, upcoming demand, and procurement action items.</div>', unsafe_allow_html=True)
 
-    # Compact selection summary
     st.markdown(f"""
     <div style="background-color: #FFFFFF; border: 1px solid #E4E9E2; border-radius: 10px; padding: 0.75rem 1.1rem; margin-bottom: 1.25rem; font-size: 0.9rem; display: flex; align-items: center; justify-content: space-between;">
         <div>
@@ -526,26 +559,24 @@ if st.session_state.nav_page == "Home":
             <strong>Store {sel_store}</strong> — <strong>{sel_family}</strong>
         </div>
         <div style="color: #70796F; font-size: 0.82rem;">
-            Protection Horizon: <strong>{inv_res.protection_horizon} Days</strong> (Review: {st.session_state.review_period}d + Lead: {st.session_state.lead_time}d)
+            Protection Horizon: <strong>{prob_res.protection_horizon_H} Days</strong> (Review: {st.session_state.review_period}d + Lead: {st.session_state.lead_time}d)
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # 4 Summary Metric Cards
     c1, c2, c3, c4 = st.columns(4)
     
     with c1:
-        needs_order = inv_res.order_quantity > 0
+        needs_order = prob_res.recommended_order_quantity > 0
         status_badge = '<span class="sw-badge-orange">Needs Reorder</span>' if needs_order else '<span class="sw-badge-green">Stock Healthy</span>'
-        review_text = "Order recommended" if needs_order else "Target level met"
         st.markdown(f"""
         <div class="sw-metric-box">
             <div style="display: flex; justify-content: space-between; align-items: center;">
-                <div class="sw-metric-label">Replenishment Status</div>
+                <div class="sw-metric-label">Recommended Order</div>
                 {status_badge}
             </div>
-            <div class="sw-metric-val">{inv_res.order_quantity:,.0f} <span style="font-size: 1rem; font-weight: 500; color: #70796F;">units</span></div>
-            <div class="sw-metric-sub">{review_text} for Store {sel_store}</div>
+            <div class="sw-metric-val">{prob_res.recommended_order_quantity:,.0f} <span style="font-size: 1rem; font-weight: 500; color: #70796F;">units</span></div>
+            <div class="sw-metric-sub">Target S = {prob_res.target_level_S:.0f} (Reorder pt s = {prob_res.reorder_point_s:.0f})</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -554,21 +585,20 @@ if st.session_state.nav_page == "Home":
         <div class="sw-metric-box">
             <div class="sw-metric-label">Current Stock on Hand</div>
             <div class="sw-metric-val">{st.session_state.on_hand:,.0f} <span style="font-size: 1rem; font-weight: 500; color: #70796F;">units</span></div>
-            <div class="sw-metric-sub">Physical shelf inventory</div>
+            <div class="sw-metric-sub">Physical warehouse & shelf inventory</div>
         </div>
         """, unsafe_allow_html=True)
 
     with c3:
-        # Days of Supply Remaining
-        cov_badge = '<span class="sw-badge-orange">Low</span>' if days_remaining <= st.session_state.lead_time else '<span class="sw-badge-green">Adequate</span>'
+        risk_badge = '<span class="sw-badge-red">Elevated</span>' if prob_res.stockout_probability_pct > 20 else '<span class="sw-badge-green">Low</span>'
         st.markdown(f"""
         <div class="sw-metric-box">
             <div style="display: flex; justify-content: space-between; align-items: center;">
-                <div class="sw-metric-label">Days of Supply Left</div>
-                {cov_badge}
+                <div class="sw-metric-label">Tail Stockout Risk</div>
+                {risk_badge}
             </div>
-            <div class="sw-metric-val">{days_remaining:.1f} <span style="font-size: 1rem; font-weight: 500; color: #70796F;">days</span></div>
-            <div class="sw-metric-sub">Lead time is {st.session_state.lead_time} days</div>
+            <div class="sw-metric-val">{prob_res.stockout_probability_pct:.1f}%</div>
+            <div class="sw-metric-sub">Expected Fill Rate: <strong>{prob_res.expected_fill_rate_pct:.1f}%</strong></div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -583,17 +613,10 @@ if st.session_state.nav_page == "Home":
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Action Banner
-    if inv_res.order_quantity > 0:
-        action_card_class = "sw-card-highlight"
-        action_title = "PROCUREMENT ACTION REQUIRED"
-        action_headline = f"Order ~{inv_res.order_quantity:,.0f} units of {sel_family}"
-        action_desc = f"Target stock position is {inv_res.target_level_S:,.0f} units (covers {inv_res.median_demand_H:,.0f} demand + {inv_res.safety_stock} safety buffer). Current position is {inv_res.net_inventory_position:,.0f} units."
-    else:
-        action_card_class = "sw-card-highlight"
-        action_title = "INVENTORY HEALTHY"
-        action_headline = "No additional stock order needed right now"
-        action_desc = f"Your current net inventory ({inv_res.net_inventory_position:,.0f} units) already meets target level ({inv_res.target_level_S:,.0f} units). No reorder is suggested for this cycle."
+    action_card_class = "sw-card-highlight" if prob_res.recommended_order_quantity > 0 else "sw-card-highlight"
+    action_title = "PROCUREMENT DECISION ADVICE"
+    action_headline = prob_res.risk_urgency_tier
+    action_desc = prob_res.detailed_explanation
 
     st.markdown(f"""
     <div class="{action_card_class}">
@@ -603,21 +626,24 @@ if st.session_state.nav_page == "Home":
     </div>
     """, unsafe_allow_html=True)
 
-    btn_col1, btn_col2, _ = st.columns([2, 2, 3])
+    btn_col1, btn_col2, btn_col3, _ = st.columns([2, 2, 2, 2])
     with btn_col1:
         if st.button("Generate Purchase Order (PO) →", type="primary", use_container_width=True):
             st.session_state.nav_page = "Order Suggestions & PO"
             st.rerun()
     with btn_col2:
-        if st.button("Run Policy Simulation →", use_container_width=True):
-            st.session_state.nav_page = "Policy Simulator"
+        if st.button("Explore ABC-XYZ Matrix →", use_container_width=True):
+            st.session_state.nav_page = "ABC-XYZ Segmentation"
+            st.rerun()
+    with btn_col3:
+        if st.button("Check Model Drift Status →", use_container_width=True):
+            st.session_state.nav_page = "Model Drift & Monitor"
             st.rerun()
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # 7-Day Demand Preview Chart
-    st.markdown("### Expected Demand Preview (7 Days)")
-    st.caption("Green depicts recent observed sales; blue illustrates upcoming probabilistic quantile demand range (Q10 to Q90).")
+    st.markdown("### Probabilistic Multi-Step Demand Projection")
+    st.caption("Green depicts observed store transactions; blue illustrates upcoming probabilistic quantile uncertainty bands [Q10 to Q90].")
 
     hist_tail = df[(df["store_nbr"] == sel_store) & (df["family"] == sel_family)].sort_values("date").tail(21)
     fc_preview = fc_df.iloc[:7]
@@ -627,7 +653,7 @@ if st.session_state.nav_page == "Home":
         x=hist_tail["date"],
         y=hist_tail["sales"],
         mode="lines",
-        name="Recent Observed Sales",
+        name="Observed Store Sales",
         line=dict(color="#287A50", width=2.2),
     ))
     fig_prev.add_trace(go.Scatter(
@@ -636,7 +662,7 @@ if st.session_state.nav_page == "Home":
         fill="toself",
         fillcolor="rgba(79, 107, 237, 0.12)",
         line=dict(color="rgba(0,0,0,0)"),
-        name="Uncertainty Band [Q10, Q90]",
+        name="80% Prediction Interval [Q10, Q90]",
         hoverinfo="skip",
     ))
     fig_prev.add_trace(go.Scatter(
@@ -661,50 +687,50 @@ if st.session_state.nav_page == "Home":
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SCREEN 2: Inventory — Stock Register & Settings
+# SCREEN 2: Inventory & Risk — Probabilistic Optimization
 # ══════════════════════════════════════════════════════════════════════════════
 
-elif st.session_state.nav_page == "Inventory":
-    st.markdown('<div class="sw-page-title">Inventory Register & Parameter Settings</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sw-page-subtitle">Inspect inventory health, configure replenishment cycles, and adjust service levels.</div>', unsafe_allow_html=True)
+elif st.session_state.nav_page == "Inventory & Risk":
+    st.markdown('<div class="sw-page-title">Probabilistic Inventory Register & Tail-Risk Analytics</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sw-page-subtitle">Quantify tail stockout probabilities, expected shortage, and overstock exposure under probabilistic demand.</div>', unsafe_allow_html=True)
 
-    i1, i2, i3, i4 = st.columns(4)
-    with i1:
+    r1, r2, r3, r4 = st.columns(4)
+    with r1:
         st.markdown(f"""
         <div class="sw-metric-box">
-            <div class="sw-metric-label">On Hand (Physical)</div>
-            <div class="sw-metric-val">{st.session_state.on_hand:,.0f}</div>
-            <div class="sw-metric-sub">Units available in warehouse</div>
+            <div class="sw-metric-label">Stockout Probability</div>
+            <div class="sw-metric-val" style="color: {'#D94F45' if prob_res.stockout_probability_pct > 20 else '#287A50'};">{prob_res.stockout_probability_pct:.1f}%</div>
+            <div class="sw-metric-sub">P(Demand > Net Position)</div>
         </div>
         """, unsafe_allow_html=True)
-    with i2:
+    with r2:
         st.markdown(f"""
         <div class="sw-metric-box">
-            <div class="sw-metric-label">In Transit (On Order)</div>
-            <div class="sw-metric-val">{st.session_state.on_order:,.0f}</div>
-            <div class="sw-metric-sub">Arriving from supplier</div>
+            <div class="sw-metric-label">Expected Fill Rate</div>
+            <div class="sw-metric-val">{prob_res.expected_fill_rate_pct:.1f}%</div>
+            <div class="sw-metric-sub">Expected demand satisfied</div>
         </div>
         """, unsafe_allow_html=True)
-    with i3:
+    with r3:
         st.markdown(f"""
         <div class="sw-metric-box">
-            <div class="sw-metric-label">Customer Backorders</div>
-            <div class="sw-metric-val">{st.session_state.backorders:,.0f}</div>
-            <div class="sw-metric-sub">Committed / unfulfilled units</div>
+            <div class="sw-metric-label">Dynamic Reorder Point (s)</div>
+            <div class="sw-metric-val">{prob_res.reorder_point_s:.0f} <span style="font-size: 0.9rem; font-weight: 500; color: #70796F;">units</span></div>
+            <div class="sw-metric-sub">Lead time demand + buffer</div>
         </div>
         """, unsafe_allow_html=True)
-    with i4:
+    with r4:
         st.markdown(f"""
         <div class="sw-metric-box">
-            <div class="sw-metric-label">Net Inventory Position</div>
-            <div class="sw-metric-val" style="color: #287A50;">{inv_res.net_inventory_position:,.0f}</div>
-            <div class="sw-metric-sub">On-hand + On-order − Backorders</div>
+            <div class="sw-metric-label">Target Level (S)</div>
+            <div class="sw-metric-val" style="color: #287A50;">{prob_res.target_level_S:.0f} <span style="font-size: 0.9rem; font-weight: 500; color: #70796F;">units</span></div>
+            <div class="sw-metric-sub">Horizon demand + Safety stock ({prob_res.safety_stock}u)</div>
         </div>
         """, unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    st.markdown("### Update Inventory Parameters")
+    st.markdown("### Planning Parameters & Cost Factors")
     with st.form("inventory_form"):
         col_s1, col_s2, col_s3 = st.columns(3)
         with col_s1:
@@ -722,7 +748,7 @@ elif st.session_state.nav_page == "Inventory":
             )
         with col_s2:
             new_backorders = st.number_input(
-                "Outstanding backorders",
+                "Outstanding customer backorders",
                 min_value=0.0,
                 value=float(st.session_state.backorders),
                 step=5.0,
@@ -744,12 +770,12 @@ elif st.session_state.nav_page == "Inventory":
             )
             new_svc = st.select_slider(
                 "Cycle service level target",
-                options=[0.90, 0.95, 0.99],
+                options=[0.85, 0.90, 0.95, 0.98, 0.99],
                 value=float(st.session_state.service_level),
                 format_func=lambda x: f"{int(x*100)}% Service Level",
             )
 
-        submit_btn = st.form_submit_button("Save & Recalculate", type="primary")
+        submit_btn = st.form_submit_button("Recalculate Probabilistic Plan", type="primary")
         if submit_btn:
             st.session_state.on_hand = new_on_hand
             st.session_state.on_order = new_on_order
@@ -757,7 +783,7 @@ elif st.session_state.nav_page == "Inventory":
             st.session_state.review_period = new_review
             st.session_state.lead_time = new_lead
             st.session_state.service_level = new_svc
-            st.success("Parameters updated successfully!")
+            st.success("Parameters saved and probabilistic risks recalculated!")
             st.rerun()
 
 
@@ -769,9 +795,8 @@ elif st.session_state.nav_page == "Order Suggestions & PO":
     st.markdown('<div class="sw-page-title">Order Suggestions & Supplier PO Generator</div>', unsafe_allow_html=True)
     st.markdown('<div class="sw-page-subtitle">Algorithmic replenishment transformed into commercial, supplier-ready purchase orders.</div>', unsafe_allow_html=True)
 
-    order_qty = inv_res.order_quantity
+    order_qty = prob_res.recommended_order_quantity
     
-    # Mathematical summary card
     st.markdown(f"""
     <div class="sw-card-highlight">
         <div style="display: flex; justify-content: space-between; align-items: flex-start;">
@@ -786,15 +811,12 @@ elif st.session_state.nav_page == "Order Suggestions & PO":
             </span>
         </div>
         <div style="font-size: 0.95rem; color: #485247; margin-top: 0.8rem; line-height: 1.5;">
-            Target level <em>S</em> = <strong>{inv_res.target_level_S:,.0f} units</strong> (Expected demand <strong>{inv_res.median_demand_H:,.0f}</strong> + Safety stock <strong>{inv_res.safety_stock}</strong>). Net position is <strong>{inv_res.net_inventory_position:,.0f} units</strong>.
+            Dynamic Reorder Point <em>s</em> = <strong>{prob_res.reorder_point_s:.0f} units</strong>. Target level <em>S</em> = <strong>{prob_res.target_level_S:.0f} units</strong>. Current position is <strong>{prob_res.net_inventory_position:.0f} units</strong>.
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # Commercial Constraints Setup
     st.markdown("### Commercial Procurement Constraints")
-    st.caption("Suppliers distribute goods in master packs and require Minimum Order Quantities (MOQs).")
-
     with st.expander("⚙️ Distributor & Packaging Configuration", expanded=True):
         po_c1, po_c2, po_c3, po_c4 = st.columns(4)
         with po_c1:
@@ -811,7 +833,6 @@ elif st.session_state.nav_page == "Order Suggestions & PO":
         st.session_state.unit_cost = unit_cost
         st.session_state.supplier_name = sup_name
 
-    # Build Official PO
     supplier = SupplierInfo(name=sup_name)
     po_item_dict = {
         "family": sel_family,
@@ -863,11 +884,9 @@ elif st.session_state.nav_page == "Order Suggestions & PO":
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Detailed PO Table
     po_df = export_po_to_dataframe(po)
     st.dataframe(po_df, hide_index=True, use_container_width=True)
 
-    # Download Buttons
     down_col1, down_col2, _ = st.columns([2.5, 2, 3])
     with down_col1:
         pdf_bytes = generate_po_pdf(po)
@@ -891,14 +910,78 @@ elif st.session_state.nav_page == "Order Suggestions & PO":
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SCREEN 4: Policy Simulator & Financial Backtesting
+# SCREEN 4: ABC-XYZ Portfolio Segmentation Matrix (NEW)
+# ══════════════════════════════════════════════════════════════════════════════
+
+elif st.session_state.nav_page == "ABC-XYZ Segmentation":
+    st.markdown('<div class="sw-page-title">ABC-XYZ Product Portfolio Segmentation</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sw-page-subtitle">9-Box classification mapping sales volume velocity (ABC) against demand volatility (XYZ) to drive differentiated replenishment strategies.</div>', unsafe_allow_html=True)
+
+    seg_df = classify_abc_xyz(df, store_nbr=sel_store)
+    grid_summary = generate_segmentation_matrix_summary(seg_df)
+
+    st.markdown("### 3×3 Portfolio Classification Grid")
+    st.dataframe(grid_summary, use_container_width=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("### Portfolio Volatility Scatter (Volume Share % vs. Demand CV)")
+    
+    fig_seg = go.Figure()
+
+    colors_map = {
+        "AX": "#287A50", "AY": "#4F6BED", "AZ": "#D94F45",
+        "BX": "#63A375", "BY": "#7B92F2", "BZ": "#E27B73",
+        "CX": "#9BC4A7", "CY": "#A6B6F7", "CZ": "#EAA7A2",
+    }
+
+    for segment_name, group in seg_df.groupby("segment"):
+        fig_seg.add_trace(go.Scatter(
+            x=group["cum_share"] * 100.0,
+            y=group["cv"],
+            mode="markers+text",
+            text=group["family"],
+            textposition="top center",
+            name=f"Segment {segment_name}",
+            marker=dict(
+                size=14,
+                color=colors_map.get(segment_name, "#555555"),
+                line=dict(width=1, color="#202820"),
+            ),
+        ))
+
+    # Cutoff reference lines
+    fig_seg.add_vline(x=80, line_dash="dash", line_color="#70796F", annotation_text="Class A Cutoff (80%)")
+    fig_seg.add_vline(x=95, line_dash="dash", line_color="#70796F", annotation_text="Class B Cutoff (95%)")
+    fig_seg.add_hline(y=0.50, line_dash="dash", line_color="#70796F", annotation_text="Class X Cutoff (CV=0.5)")
+    fig_seg.add_hline(y=1.00, line_dash="dash", line_color="#70796F", annotation_text="Class Y Cutoff (CV=1.0)")
+
+    fig_seg.update_layout(
+        paper_bgcolor="#FFFFFF",
+        plot_bgcolor="#FFFFFF",
+        margin=dict(l=10, r=10, t=10, b=10),
+        height=450,
+        xaxis=dict(title="Cumulative Volume Share (%)", showgrid=True, gridcolor="#F0F2ED"),
+        yaxis=dict(title="Demand Volatility (Coefficient of Variation CV = σ / μ)", showgrid=True, gridcolor="#F0F2ED"),
+    )
+    st.plotly_chart(fig_seg, use_container_width=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("### Differentiated Policy Rules by Category")
+    display_cols = [
+        "family", "segment", "priority_level", "target_service_level",
+        "recommended_review_period", "forecasting_strategy", "inventory_strategy"
+    ]
+    st.dataframe(seg_df[display_cols], hide_index=True, use_container_width=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SCREEN 5: Policy Simulator & Financial Backtesting
 # ══════════════════════════════════════════════════════════════════════════════
 
 elif st.session_state.nav_page == "Policy Simulator":
     st.markdown('<div class="sw-page-title">Historical Inventory Policy Simulator & Financial Backtesting</div>', unsafe_allow_html=True)
     st.markdown('<div class="sw-page-subtitle">Backtest StockWise Dynamic Quantile against Static Min-Max (s, S) and Moving Average heuristics over historical timelines.</div>', unsafe_allow_html=True)
 
-    # Subseries history
     sub_df = df[(df["store_nbr"] == sel_store) & (df["family"] == sel_family)].sort_values("date")
     demand_series = sub_df.set_index("date")["sales"]
 
@@ -942,14 +1025,13 @@ elif st.session_state.nav_page == "Policy Simulator":
             comparison_table = format_simulation_comparison_table(sim_results)
             st.dataframe(comparison_table, hide_index=True, use_container_width=True)
 
-            # Daily On-Hand Inventory Trajectory Plot
-            st.markdown("### Daily On-Hand Stock Trajectory (Side-by-Side)")
+            st.markdown("### Daily On-Hand Stock Trajectory")
             fig_sim = go.Figure()
 
             policy_colors = {
-                PolicyType.STOCKWISE_DYNAMIC: "#287A50", # Forest green
-                PolicyType.STATIC_MIN_MAX: "#4F6BED",    # Blue
-                PolicyType.MOVING_AVERAGE: "#D99024",    # Amber
+                PolicyType.STOCKWISE_DYNAMIC: "#287A50",
+                PolicyType.STATIC_MIN_MAX: "#4F6BED",
+                PolicyType.MOVING_AVERAGE: "#D99024",
             }
 
             for p_type, run_res in sim_results.items():
@@ -961,7 +1043,6 @@ elif st.session_state.nav_page == "Policy Simulator":
                     line=dict(color=policy_colors.get(p_type, "#555555"), width=2.2),
                 ))
 
-            # Stockout line at 0
             fig_sim.add_hline(y=0, line_dash="dash", line_color="#D94F45", annotation_text="Stockout Threshold (0 units)")
 
             fig_sim.update_layout(
@@ -977,7 +1058,63 @@ elif st.session_state.nav_page == "Policy Simulator":
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SCREEN 5: Custom Store Upload (Merchant POS / ERP Ingestion)
+# SCREEN 6: Model Drift & System Health Monitoring (NEW)
+# ══════════════════════════════════════════════════════════════════════════════
+
+elif st.session_state.nav_page == "Model Drift & Monitor":
+    st.markdown('<div class="sw-page-title">Advanced Model Drift & System Health Monitor</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sw-page-subtitle">Track feature distribution shifts (PSI, Kolmogorov-Smirnov) and forecast tracking signal bias to safeguard production reliability.</div>', unsafe_allow_html=True)
+
+    feat_cols = model_meta.get("feature_cols", [])
+    split_idx = int(len(df) * 0.80)
+    df_ref = df.iloc[:split_idx]
+    df_cur = df.iloc[split_idx:]
+
+    report = audit_dataset_drift(df_ref, df_cur, feature_cols=feat_cols, target_col="sales")
+
+    dh1, dh2, dh3 = st.columns(3)
+    with dh1:
+        st.markdown(f"""
+        <div class="sw-metric-box">
+            <div class="sw-metric-label">System Drift Status</div>
+            <div class="sw-metric-val" style="color: {'#287A50' if report.overall_status == 'HEALTHY' else '#D94F45'};">{report.overall_status}</div>
+            <div class="sw-metric-sub">{report.recommendation_summary}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with dh2:
+        st.markdown(f"""
+        <div class="sw-metric-box">
+            <div class="sw-metric-label">Mean Population Stability Index</div>
+            <div class="sw-metric-val">{report.mean_psi_score:.3f}</div>
+            <div class="sw-metric-sub">PSI &lt; 0.10: Stable | &gt; 0.25: Drift</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with dh3:
+        st.markdown(f"""
+        <div class="sw-metric-box">
+            <div class="sw-metric-label">Retraining Recommendation</div>
+            <div class="sw-metric-val" style="color: {'#D94F45' if report.retrain_recommended else '#287A50'};">{'ACTION NEEDED' if report.retrain_recommended else 'NOT REQUIRED'}</div>
+            <div class="sw-metric-sub">Tracking Signal: {report.tracking_signal_status}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("### Feature-Level Stability & Divergence Scorecard")
+
+    drift_rows = []
+    for feat, f_res in report.feature_details.items():
+        drift_rows.append({
+            "Feature": feat,
+            "PSI Score": f"{f_res.psi_score:.4f}",
+            "KS Statistic": f"{f_res.ks_statistic:.4f}",
+            "KS p-value": f"{f_res.ks_p_value:.4e}",
+            "Drift Status": f_res.drift_status,
+        })
+    st.dataframe(pd.DataFrame(drift_rows), hide_index=True, use_container_width=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SCREEN 7: Custom Store Upload
 # ══════════════════════════════════════════════════════════════════════════════
 
 elif st.session_state.nav_page == "Custom Store Upload":
@@ -987,7 +1124,6 @@ elif st.session_state.nav_page == "Custom Store Upload":
     uploaded_file = st.file_uploader(
         "Upload Sales / Transaction File (.csv, .xlsx)",
         type=["csv", "xlsx", "xls"],
-        help="Upload sales transactions with date, item/family, and quantity/sales.",
     )
 
     if uploaded_file is not None:
@@ -1039,24 +1175,14 @@ elif st.session_state.nav_page == "Custom Store Upload":
             st.markdown("### Regularized Merchant Dataset Preview")
             st.dataframe(reg_df.head(20), use_container_width=True)
 
-            if report.is_valid and len(reg_df) > 0:
-                cust_fam = st.selectbox("Select Item to Forecast from Upload", reg_df["family"].unique())
-                cust_sub = reg_df[reg_df["family"] == cust_fam].sort_values("date")
-                
-                # Fast baseline forecast
-                rolling_7_mean = float(cust_sub["sales"].tail(7).mean())
-                cust_fc_qty = max(0, int(rolling_7_mean * 7))
-
-                st.success(f"Calculated 7-day baseline demand for **{cust_fam}**: ~**{cust_fc_qty} units** based on your trailing 7-day average of {rolling_7_mean:.1f} units/day.")
-
         except Exception as e:
             st.error(f"Failed to process custom file: {e}")
     else:
-        st.info("💡 **Ready for your store's data**: Simply export your recent transactions or daily sales ledger from Square, Shopify, Lightspeed, or SAP and upload it here.")
+        st.info("💡 **Ready for real data**: Export recent sales transactions from Square, Shopify, Lightspeed, or SAP and upload them directly.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SCREEN 6: Sales Trends
+# SCREEN 8: Sales Trends
 # ══════════════════════════════════════════════════════════════════════════════
 
 elif st.session_state.nav_page == "Sales Trends":
@@ -1104,62 +1230,75 @@ elif st.session_state.nav_page == "Sales Trends":
     )
     st.plotly_chart(fig_trends, use_container_width=True)
 
-    avg_sales = series_df["sales"].mean()
-    max_sales = series_df["sales"].max()
-    recent_trend = "increasing" if series_df["sales"].tail(7).mean() > series_df["sales"].tail(14).mean() else "stable or decreasing"
-
-    ob1, ob2, ob3 = st.columns(3)
-    with ob1:
-        st.markdown(f"""
-        <div class="sw-metric-box">
-            <div class="sw-metric-label">Average Daily Demand</div>
-            <div class="sw-metric-val">{avg_sales:.1f} <span style="font-size: 0.9rem; font-weight: 500; color: #70796F;">units/day</span></div>
-            <div class="sw-metric-sub">Calculated across recorded store history</div>
-        </div>
-        """, unsafe_allow_html=True)
-    with ob2:
-        st.markdown(f"""
-        <div class="sw-metric-box">
-            <div class="sw-metric-label">Peak Observed Sales</div>
-            <div class="sw-metric-val">{max_sales:.1f} <span style="font-size: 0.9rem; font-weight: 500; color: #70796F;">units</span></div>
-            <div class="sw-metric-sub">Highest daily volume recorded</div>
-        </div>
-        """, unsafe_allow_html=True)
-    with ob3:
-        st.markdown(f"""
-        <div class="sw-metric-box">
-            <div class="sw-metric-label">Recent Trend Direction</div>
-            <div class="sw-metric-val" style="font-size: 1.35rem; text-transform: capitalize; color: #287A50;">{recent_trend}</div>
-            <div class="sw-metric-sub">Past 7 days vs past 14 days</div>
-        </div>
-        """, unsafe_allow_html=True)
-
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SCREEN 7: Advanced Analytics & Model Verification
+# SCREEN 9: Advanced Analytics & Research Suite
 # ══════════════════════════════════════════════════════════════════════════════
 
 elif st.session_state.nav_page == "Advanced Analytics":
     st.markdown('<div class="sw-page-title">Advanced Analytics & Model Verification</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sw-page-subtitle">Conformal prediction intervals, multi-model cross-validation, TreeSHAP attributions, and mathematical foundations.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sw-page-subtitle">Hybrid Ensemble optimization, Conformal calibration (CQR), TreeSHAP feature attributions, and mathematical formulations.</div>', unsafe_allow_html=True)
 
-    tech_tab1, tech_tab2, tech_tab3, tech_tab4, tech_tab5 = st.tabs([
+    tech_tab1, tech_tab2, tech_tab3, tech_tab4, tech_tab5, tech_tab6 = st.tabs([
+        "🤝 Hybrid Ensemble (Validation-Weighted)",
         "🎯 Conformal Prediction (CQR)",
         "🏁 Model Benchmarks (Walk-Forward CV)",
         "🔬 Explainable AI (TreeSHAP)",
-        "📊 Holdout Metrics",
+        "📊 Automated Feature Selection",
         "📐 Mathematical Formulations",
     ])
 
-    # Tab 1: Conformalized Quantile Regression
+    # Tab 1: Hybrid Ensemble
     with tech_tab1:
-        st.markdown("#### Conformalized Quantile Regression (Romano et al., 2019)")
+        st.markdown("#### Hybrid Quantile Ensemble (LightGBM + XGBoost + CatBoost + Seasonal Naive)")
         st.markdown("""
-        Standard quantile regression models often suffer from empirical coverage gaps (e.g., nominal 80% intervals covering only 30%–60% of real observations) due to unmodeled error skewness.
-        **Conformal Prediction** calculates non-conformity residuals on held-out calibration data to guarantee exact finite-sample prediction coverage.
+        Combines predictions using out-of-sample validation loss weights:
+        $$w_m = \\frac{1 / (\\text{Loss}_m^p)}{\\sum_j 1 / (\\text{Loss}_j^p)}$$
+        Rather than relying on arbitrary fixed weights, the system dynamically shifts weights toward the most accurate algorithm.
         """)
 
-        # Compute calibration on validation holdout
+        if st.button("Fit & Benchmark Hybrid Ensemble"):
+            with st.spinner("Training candidate models and evaluating out-of-sample weights..."):
+                try:
+                    sub_work = df[(df["store_nbr"] == sel_store) & (df["family"] == sel_family)].sort_values("date").reset_index(drop=True)
+                    val_len = max(10, int(len(sub_work) * 0.20))
+                    train_w = sub_work.iloc[:-val_len]
+                    val_w = sub_work.iloc[-val_len:]
+
+                    feat_cols = model_meta.get("feature_cols", [])
+                    from src.features import build_features
+                    train_w_feat = build_features(train_w)
+                    val_w_feat = build_features(val_w)
+
+                    X_tr = train_w_feat[feat_cols]
+                    y_tr = train_w_feat["sales"].to_numpy()
+                    X_va = val_w_feat[feat_cols]
+                    y_va = val_w_feat["sales"].to_numpy()
+
+                    ens = HybridQuantileEnsemble(mode="weighted_blend", include_catboost=True, include_xgboost=True)
+                    e_rep = ens.fit(X_tr, y_tr, X_va, y_va, df_train_full=train_w, df_val_full=val_w)
+
+                    st.success(f"Best Performing Individual Model: **{e_rep.best_single_model}** | Ensemble Validation WAPE: **{e_rep.ensemble_wape*100:.2f}%**")
+
+                    score_rows = []
+                    for m_name, c_m in e_rep.candidate_metrics.items():
+                        score_rows.append({
+                            "Candidate Model": m_name,
+                            "Validation WAPE (%)": f"{c_m.wape*100:.2f}%",
+                            "MAE": f"{c_m.mae:.2f}",
+                            "RMSE": f"{c_m.rmse:.2f}",
+                            "Pinball Loss": f"{c_m.pinball_avg:.3f}",
+                            "Dynamic Weight (%)": f"{c_m.weight*100:.1f}%",
+                            "Train Time": f"{c_m.training_time_sec:.2f}s",
+                        })
+                    st.dataframe(pd.DataFrame(score_rows), hide_index=True, use_container_width=True)
+
+                except Exception as ens_e:
+                    st.error(f"Ensemble fitting error: {ens_e}")
+
+    # Tab 2: Conformal CQR
+    with tech_tab2:
+        st.markdown("#### Conformalized Quantile Regression (Romano et al., 2019)")
         feat_cols = model_meta.get("feature_cols", [])
         if feat_cols and all(c in df.columns for c in feat_cols):
             val_tail = df.tail(min(300, len(df)))
@@ -1182,26 +1321,15 @@ elif st.session_state.nav_page == "Advanced Analytics":
             with cq1:
                 st.metric("Nominal Target Coverage", f"{cqr_res.nominal_coverage*100:.0f}%")
             with cq2:
-                st.metric("Raw LightGBM Empirical Coverage", f"{cqr_res.raw_coverage*100:.1f}%")
+                st.metric("Raw LightGBM Coverage", f"{cqr_res.raw_coverage*100:.1f}%")
             with cq3:
                 st.metric("Conformal Calibrated Coverage", f"{cqr_res.calibrated_coverage*100:.1f}%", delta=f"{(cqr_res.calibrated_coverage - cqr_res.raw_coverage)*100:+.1f}%")
 
-            st.info(f"Conformal non-conformity adjustment parameter: **Δ = {cqr_res.conformal_adjustment:.2f} units**. Prediction intervals are adaptively expanded to guarantee finite-sample coverage.")
+            st.info(f"Conformal non-conformity adjustment parameter: **Δ = {cqr_res.conformal_adjustment:.2f} units**. Guarantees finite-sample coverage at nominal target.")
 
-            # Calibrate current forecast
-            calibrated_fc = calibrate_forecast_dataframe(fc_df, cqr_res.conformal_adjustment)
-            st.markdown("##### Calibrated Multi-Step Forecast (Current Store Category)")
-            st.dataframe(
-                calibrated_fc[["date", "pred_q10", "pred_q10_calib", "pred_q50", "pred_q90", "pred_q90_calib", "interval_width_calib"]].head(7),
-                hide_index=True,
-                use_container_width=True,
-            )
-
-    # Tab 2: Walk-Forward CV Benchmarking
-    with tech_tab2:
+    # Tab 3: Walk-Forward CV
+    with tech_tab3:
         st.markdown("#### Expanding-Window Walk-Forward Cross Validation")
-        st.caption("Out-of-sample benchmark comparing LightGBM vs XGBoost vs Seasonal Naive vs Rolling Mean over rolling time-series horizons.")
-
         if st.button("Run Walk-Forward CV Benchmark Suite"):
             with st.spinner("Executing time-series cross validation across models..."):
                 try:
@@ -1214,21 +1342,11 @@ elif st.session_state.nav_page == "Advanced Analytics":
                         include_xgboost=XGB_AVAILABLE,
                     )
                     st.dataframe(bench_report.summary_df, hide_index=True, use_container_width=True)
-                    st.success(f"Benchmarking completed across {bench_report.n_folds} chronological folds of {bench_report.test_horizon_days} days each.")
                 except Exception as b_err:
                     st.error(f"Benchmark error: {b_err}")
-        else:
-            st.markdown("""
-            Click above to benchmark all model candidates on:
-            - **WAPE (%)**: Weighted Absolute Percentage Error (sales-weighted accuracy)
-            - **MAE & RMSE**: Error magnitudes
-            - **Pinball Loss**: Quantile calibration loss
-            - **80% Coverage**: Empirical interval hit rate
-            - **Inference Latency**: Milliseconds per prediction
-            """)
 
-    # Tab 3: TreeSHAP
-    with tech_tab3:
+    # Tab 4: TreeSHAP
+    with tech_tab4:
         st.markdown("#### Feature Influence Analysis (TreeSHAP)")
         if not is_shap_available():
             st.warning("SHAP package not installed. Run `pip install shap`.")
@@ -1259,79 +1377,52 @@ elif st.session_state.nav_page == "Advanced Analytics":
                     st.info(f"Global importance: {e}")
 
             with sh_col2:
-                st.markdown("##### Local Driver Breakdown (Next Day)")
+                st.markdown("##### Plain-Language Decision Rationale")
                 try:
-                    from src.features import build_future_features
-                    last_date = df[(df["store_nbr"] == sel_store) & (df["family"] == sel_family)]["date"].max()
-                    next_day = pd.date_range(last_date + pd.Timedelta(days=1), periods=1)
-                    feat_row = build_future_features(
-                        history_df=df,
-                        future_dates=next_day,
-                        store_nbr=sel_store,
-                        family=sel_family,
-                        store_map=model_meta.get("store_map"),
-                        family_map=model_meta.get("family_map"),
+                    rat = generate_rationale(
+                        forecast_df=fc_df,
+                        shap_df=None,
+                        inventory_result=inv_res,
+                        data_source="real",
                     )
-                    X_row = feat_row.reindex(columns=feature_cols)
-                    loc_df = local_shap_explanation(q50_model, X_row, feature_cols)
+                    st.info(rat)
+                except Exception:
+                    st.write(inv_res.explanation)
 
-                    if loc_df is not None and not loc_df.empty:
-                        top_loc = loc_df.head(10).copy()
-                        bar_colors = ["#D94F45" if v > 0 else "#4F6BED" for v in top_loc["shap_value"]]
-                        fig_loc = go.Figure(go.Bar(
-                            x=top_loc["shap_value"],
-                            y=top_loc["feature"],
-                            orientation="h",
-                            marker_color=bar_colors,
-                        ))
-                        fig_loc.update_layout(
-                            paper_bgcolor="#FFFFFF",
-                            plot_bgcolor="#FFFFFF",
-                            margin=dict(l=10, r=10, t=10, b=10),
-                            height=350,
-                            yaxis=dict(autorange="reversed"),
-                            xaxis=dict(title="SHAP Impact (Red = Increases Forecast)", showgrid=True, gridcolor="#F0F2ED"),
-                        )
-                        st.plotly_chart(fig_loc, use_container_width=True)
-                except Exception as e:
-                    st.info(f"Local SHAP status: {e}")
-
-            st.markdown("---")
-            st.markdown("##### Plain-Language Model Rationale")
-            try:
-                rat = generate_rationale(
-                    forecast_df=fc_df,
-                    shap_df=loc_df if "loc_df" in locals() and loc_df is not None else None,
-                    inventory_result=inv_res,
-                    data_source="real",
-                )
-                st.info(rat)
-            except Exception:
-                st.write(inv_res.explanation)
-
-    # Tab 4: Holdout Metrics
-    with tech_tab4:
-        st.markdown("#### Validation Metrics (Chronological Holdout Split)")
-        if "metrics" in model_meta:
-            mdf = format_metrics_table(model_meta["metrics"])
-            st.dataframe(mdf, hide_index=True, use_container_width=True)
-
-    # Tab 5: Mathematical Logic
+    # Tab 5: Feature Selection
     with tech_tab5:
+        st.markdown("#### Automated Feature Selection & Redundancy Pruning")
+        if st.button("Run Feature Selection Pipeline"):
+            with st.spinner("Pruning low variance and collinear features..."):
+                try:
+                    feat_cols = model_meta.get("feature_cols", [])
+                    X_raw = df.dropna(subset=["sales"])[feat_cols]
+                    y_raw = df.dropna(subset=["sales"])["sales"].to_numpy()
+
+                    X_pruned, fs_rep = run_automated_feature_selection(X_raw, y_raw, top_k=15)
+                    st.success(f"Reduced feature space from {fs_rep.initial_feature_count} to {fs_rep.selected_feature_count} high-signal features.")
+
+                    st.markdown(f"**Dropped Collinear Features**: `{fs_rep.dropped_collinear}`")
+                    st.markdown(f"**Selected Top Features**: `{fs_rep.selected_features}`")
+                except Exception as f_err:
+                    st.error(f"Feature selection error: {f_err}")
+
+    # Tab 6: Mathematical Formulations
+    with tech_tab6:
         st.markdown("#### Mathematical Inventory & Procurement Formulations")
         st.latex(r"I_{pos} = \text{On-Hand} + \text{On-Order} - \text{Backorders}")
         st.latex(r"H = R + L \quad (\text{Protection Horizon})")
         st.latex(r"D_H = \sum_{t=1}^{H} Q_{50,t} \quad (\text{Median Cumulative Demand})")
         st.latex(r"\sigma_t = \frac{Q_{90,t} - Q_{10,t}}{2 \times 1.2816} \approx \frac{Q_{90,t} - Q_{10,t}}{2.564}")
         st.latex(r"\sigma_H = \sqrt{\sum_{t=1}^{H} \sigma_t^2} \quad (\text{Protection Uncertainty})")
-        st.latex(r"SS = \max\left(0, \lceil z_p \cdot \sigma_H \rceil\right) \quad (\text{Safety Stock})")
-        st.latex(r"S = D_H + SS \quad (\text{Target Order-Up-To Level})")
-        st.latex(r"Q_{algo} = \max\left(0, \lceil S - I_{pos} \rceil\right)")
-        st.latex(r"Q_{cases} = \left\lceil \frac{\max(Q_{algo}, MOQ)}{\text{PackSize}} \right\rceil, \quad Q_{commercial} = Q_{cases} \times \text{PackSize}")
+        st.latex(r"s = D_L + z_p \cdot \sigma_L \quad (\text{Dynamic Reorder Point})")
+        st.latex(r"S = D_H + z_p \cdot \sigma_H \quad (\text{Target Order-Up-To Level})")
+        st.latex(r"P(\text{Stockout}) = 1 - \Phi\left(\frac{I_{pos} - D_H}{\sigma_H}\right)")
+        st.latex(r"E[\text{Excess}] = (I_{pos} - D_H)\Phi(z) + \sigma_H \phi(z)")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SCREEN 8: Settings & REST API Microservice
+# SCREEN 10: Settings & REST API Microservice
 # ══════════════════════════════════════════════════════════════════════════════
 
 elif st.session_state.nav_page == "Settings & API Microservice":
@@ -1362,9 +1453,6 @@ elif st.session_state.nav_page == "Settings & API Microservice":
 
     st.markdown("---")
     st.markdown("### Production REST API Microservice (`api.py`)")
-    st.markdown("""
-    The system includes an enterprise-ready FastAPI microservice to connect with external Warehouse Management Systems (WMS), Enterprise Resource Planning (ERP), and Point-of-Sale (POS) registers.
-    """)
 
     api_t1, api_t2, api_t3 = st.tabs(["Endpoints Summary", "Example cURL Commands", "Model Retrain"])
     with api_t1:
@@ -1373,18 +1461,22 @@ elif st.session_state.nav_page == "Settings & API Microservice":
         | :--- | :--- | :--- |
         | `GET` | `/health` | Service health status and uptime |
         | `GET` | `/catalog` | Available stores and product family catalogs |
+        | `GET` | `/segmentation` | ABC-XYZ product portfolio 9-box classification |
         | `POST` | `/forecast` | Probabilistic multi-day quantile demand predictions |
+        | `POST` | `/ensemble-forecast` | Multi-model hybrid ensemble (LightGBM/XGB/CatBoost) |
         | `POST` | `/replenishment` | Replenishment recommendation ($S, Q$) and stockout risk |
+        | `POST` | `/probabilistic-replenishment` | Tail stockout probability, expected fill rate & excess units |
+        | `POST` | `/drift-audit` | Population Stability Index (PSI) and covariate drift audit |
         | `POST` | `/purchase-order` | Generates supplier PO with pack rounding & MOQ constraints |
         | `POST` | `/simulate` | Historical discrete-event policy financial backtesting |
         """)
     with api_t2:
-        st.markdown("##### Run Server:")
-        st.code("uvicorn api:app --host 0.0.0.0 --port 8000 --reload", language="bash")
-        st.markdown("##### Query Replenishment via cURL:")
-        st.code("""curl -X POST "http://localhost:8000/replenishment" \\
+        st.markdown("##### Query Probabilistic Replenishment via cURL:")
+        st.code("""curl -X POST "http://localhost:8000/probabilistic-replenishment" \\
   -H "Content-Type: application/json" \\
-  -d '{"store_nbr": 3, "family": "BEVERAGES", "on_hand": 120, "review_period": 7, "lead_time": 3}'""", language="bash")
+  -d '{"store_nbr": 3, "family": "BEVERAGES", "on_hand": 85, "review_period": 7, "lead_time": 3, "target_service_level": 0.95}'""", language="bash")
+        st.markdown("##### Run Statistical Drift Audit:")
+        st.code("""curl -X POST "http://localhost:8000/drift-audit" """, language="bash")
     with api_t3:
         st.markdown("Retrain LightGBM forecasting models across all historical store categories:")
         if st.button("Retrain Models Now"):

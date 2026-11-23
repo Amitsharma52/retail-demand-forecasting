@@ -41,6 +41,10 @@ from src.po_generator import (
     export_po_to_dataframe,
 )
 from src.simulation import CostParameters, PolicyType, run_comparative_simulation
+from src.segmentation import classify_abc_xyz, generate_segmentation_matrix_summary, SEGMENT_POLICIES
+from src.probabilistic_inventory import ProbabilisticInventoryInputs, compute_probabilistic_inventory
+from src.drift_monitor import audit_dataset_drift, calculate_psi, calculate_tracking_signal
+from src.forecasting_ensemble import HybridQuantileEnsemble
 
 logger = logging.getLogger("retail_api")
 
@@ -540,4 +544,253 @@ def post_simulation(req: SimulationRequest):
         "family": req.family,
         "total_days_simulated": len(demand_series),
         "policies": metrics_out,
+    }
+
+
+# ── Advanced Research & Optimization Endpoints ─────────────────────────────────
+
+@app.get("/segmentation")
+def get_portfolio_segmentation(store_nbr: Optional[int] = Query(default=None)):
+    """
+    ABC-XYZ Product Portfolio Segmentation & Strategic Policy Profiler.
+    Classifies store product families into a 9-box matrix (AX to CZ)
+    based on Pareto sales velocity (ABC) and demand variability CV (XYZ).
+    """
+    if _DATA is None:
+        raise HTTPException(status_code=503, detail="Historical dataset not loaded.")
+
+    seg_df = classify_abc_xyz(_DATA, store_nbr=store_nbr)
+    matrix_grid = generate_segmentation_matrix_summary(seg_df)
+
+    # Convert to JSON-serializable structures
+    items = []
+    for _, r in seg_df.iterrows():
+        items.append({
+            "store_nbr": int(r["store_nbr"]),
+            "family": str(r["family"]),
+            "total_units": round(float(r["total_units"]), 1),
+            "share_pct": round(float(r["share"]) * 100.0, 2),
+            "cum_share_pct": round(float(r["cum_share"]) * 100.0, 2),
+            "abc_class": str(r["abc_class"]),
+            "cv": round(float(r["cv"]), 3),
+            "xyz_class": str(r["xyz_class"]),
+            "segment": str(r["segment"]),
+            "target_service_level": float(r["target_service_level"]),
+            "recommended_review_period": int(r["recommended_review_period"]),
+            "priority_level": str(r["priority_level"]),
+            "forecasting_strategy": str(r["forecasting_strategy"]),
+            "inventory_strategy": str(r["inventory_strategy"]),
+        })
+
+    grid_dict = {
+        idx: {col: int(matrix_grid.loc[idx, col]) for col in matrix_grid.columns}
+        for idx in matrix_grid.index
+    }
+
+    return {
+        "store_filter": store_nbr,
+        "total_items_classified": len(items),
+        "matrix_summary": grid_dict,
+        "items": items,
+    }
+
+
+class ProbabilisticReplenishmentRequest(BaseModel):
+    store_nbr: int = Field(default=3)
+    family: str = Field(default="BEVERAGES")
+    on_hand: float = Field(ge=0.0)
+    on_order: float = Field(default=0.0, ge=0.0)
+    backorders: float = Field(default=0.0, ge=0.0)
+    review_period: int = Field(default=7, ge=1, le=30)
+    lead_time: int = Field(default=3, ge=1, le=30)
+    target_service_level: float = Field(default=0.95, ge=0.50, le=0.999)
+    unit_cost: float = Field(default=10.0, ge=0.01)
+    selling_price: float = Field(default=16.0, ge=0.01)
+    holding_cost_rate: float = Field(default=0.20, ge=0.0)
+
+
+@app.post("/probabilistic-replenishment")
+def post_probabilistic_replenishment(req: ProbabilisticReplenishmentRequest):
+    """
+    Probabilistic Inventory Optimization with tail-risk and expected overstock calculations.
+    """
+    fc_res = post_forecast(
+        ForecastRequest(
+            store_nbr=req.store_nbr,
+            family=req.family,
+            horizon=req.review_period + req.lead_time,
+            apply_conformal=True,
+        )
+    )
+
+    fc_df = pd.DataFrame([
+        {
+            "date": pd.to_datetime(f.date),
+            "pred_q10": f.q10,
+            "pred_q50": f.q50,
+            "pred_q90": f.q90,
+        }
+        for f in fc_res.forecasts
+    ])
+
+    prob_inputs = ProbabilisticInventoryInputs(
+        on_hand=req.on_hand,
+        on_order=req.on_order,
+        backorders=req.backorders,
+        review_period=req.review_period,
+        lead_time=req.lead_time,
+        target_service_level=req.target_service_level,
+        unit_cost=req.unit_cost,
+        selling_price=req.selling_price,
+        holding_cost_rate_annual=req.holding_cost_rate,
+    )
+
+    prob_res = compute_probabilistic_inventory(prob_inputs, fc_df)
+
+    return {
+        "store_nbr": req.store_nbr,
+        "family": req.family,
+        "net_inventory_position": prob_res.net_inventory_position,
+        "protection_horizon_days": prob_res.protection_horizon_H,
+        "expected_demand_horizon": prob_res.expected_demand_horizon_DH,
+        "uncertainty_horizon_sigma": prob_res.uncertainty_horizon_sigmaH,
+        "safety_stock": prob_res.safety_stock,
+        "reorder_point_s": prob_res.reorder_point_s,
+        "target_level_S": prob_res.target_level_S,
+        "recommended_order_quantity": prob_res.recommended_order_quantity,
+        "reorder_triggered": prob_res.reorder_triggered,
+        "stockout_probability_pct": prob_res.stockout_probability_pct,
+        "cycle_service_level_pct": prob_res.cycle_service_level_pct,
+        "expected_shortage_units": prob_res.expected_shortage_units,
+        "expected_fill_rate_pct": prob_res.expected_fill_rate_pct,
+        "expected_overstock_units": prob_res.expected_overstock_units,
+        "expected_holding_cost_period": prob_res.expected_holding_cost_period,
+        "expected_stockout_cost_period": prob_res.expected_stockout_cost_period,
+        "risk_urgency_tier": prob_res.risk_urgency_tier,
+        "explanation": prob_res.detailed_explanation,
+    }
+
+
+@app.post("/drift-audit")
+def post_drift_audit():
+    """
+    Statistical Concept & Data Drift Audit across baseline reference data
+    and latest production inference window (PSI & Kolmogorov-Smirnov tests).
+    """
+    if _DATA is None or not _META:
+        raise HTTPException(status_code=503, detail="Dataset or model metadata not initialized.")
+
+    feat_cols = _META.get("feature_cols", [])
+    if not feat_cols:
+        raise HTTPException(status_code=500, detail="Feature metadata not available.")
+
+    # Chronological partition: reference (first 80%) vs current (last 20%)
+    split_idx = int(len(_DATA) * 0.80)
+    df_ref = _DATA.iloc[:split_idx].copy()
+    df_cur = _DATA.iloc[split_idx:].copy()
+
+    report = audit_dataset_drift(df_ref, df_cur, feature_cols=feat_cols, target_col="sales")
+
+    feature_details_out = {
+        feat: {
+            "psi_score": f_res.psi_score,
+            "ks_stat": f_res.ks_statistic,
+            "ks_pvalue": f_res.ks_p_value,
+            "status": f_res.drift_status,
+        }
+        for feat, f_res in report.feature_details.items()
+    }
+
+    return {
+        "overall_status": report.overall_status,
+        "retrain_recommended": report.retrain_recommended,
+        "mean_psi_score": report.mean_psi_score,
+        "features_with_drift": report.features_with_drift,
+        "tracking_signal_status": report.tracking_signal_status,
+        "recommendation_summary": report.recommendation_summary,
+        "feature_details": feature_details_out,
+    }
+
+
+class EnsembleForecastRequest(BaseModel):
+    store_nbr: int = Field(default=3)
+    family: str = Field(default="BEVERAGES")
+    horizon: int = Field(default=7, ge=1, le=30)
+    mode: str = Field(default="weighted_blend", description="'weighted_blend' or 'best_single'")
+
+
+@app.post("/ensemble-forecast")
+def post_ensemble_forecast(req: EnsembleForecastRequest):
+    """
+    Multi-Model Hybrid Quantile Ensemble Forecast (LightGBM + XGBoost + CatBoost + Seasonal Naive).
+    Weights candidate models dynamically based on out-of-sample validation loss.
+    """
+    if _DATA is None or not _META:
+        raise HTTPException(status_code=503, detail="Dataset not loaded.")
+
+    sub = _DATA[(_DATA["store_nbr"] == req.store_nbr) & (_DATA["family"] == req.family)].copy()
+    if len(sub) < 30:
+        raise HTTPException(status_code=400, detail="Insufficient history for ensemble fitting (need >= 30 days).")
+
+    feat_cols = _META.get("feature_cols", [])
+    if not all(c in sub.columns for c in feat_cols):
+        from src.features import build_features
+        sub = build_features(sub)
+
+    sub = sub.sort_values("date").reset_index(drop=True)
+    val_split = max(10, int(len(sub) * 0.20))
+    train_sub = sub.iloc[:-val_split]
+    val_sub = sub.iloc[-val_split:]
+
+    X_train = train_sub[feat_cols]
+    y_train = train_sub["sales"].to_numpy()
+    X_val = val_sub[feat_cols]
+    y_val = val_sub["sales"].to_numpy()
+
+    ensemble = HybridQuantileEnsemble(mode=req.mode, include_catboost=True, include_xgboost=True)
+    fit_report = ensemble.fit(X_train, y_train, X_val, y_val, df_train_full=train_sub, df_val_full=val_sub)
+
+    # Multi-step forecasting for future horizon
+    raw_fc = generate_forecast(
+        history_df=_DATA,
+        q10_model=_MODELS["q10"],
+        q50_model=_MODELS["q50"],
+        q90_model=_MODELS["q90"],
+        meta=_META,
+        store_nbr=req.store_nbr,
+        family=req.family,
+        horizon=req.horizon,
+    )
+
+    future_dates = [str(pd.Timestamp(d).date()) for d in raw_fc["date"]]
+
+    candidate_scores = {
+        m_name: {
+            "wape_pct": round(c_m.wape * 100.0, 2),
+            "mae": round(c_m.mae, 2),
+            "pinball_loss": round(c_m.pinball_avg, 3),
+            "assigned_weight_pct": round(c_m.weight * 100.0, 1),
+        }
+        for m_name, c_m in fit_report.candidate_metrics.items()
+    }
+
+    forecasts = [
+        {
+            "date": future_dates[i],
+            "q10": round(float(raw_fc["pred_q10"].iloc[i]), 2),
+            "q50": round(float(raw_fc["pred_q50"].iloc[i]), 2),
+            "q90": round(float(raw_fc["pred_q90"].iloc[i]), 2),
+        }
+        for i in range(len(raw_fc))
+    ]
+
+    return {
+        "store_nbr": req.store_nbr,
+        "family": req.family,
+        "horizon_days": req.horizon,
+        "ensemble_mode": req.mode,
+        "best_single_model": fit_report.best_single_model,
+        "ensemble_validation_wape_pct": round(fit_report.ensemble_wape * 100.0, 2),
+        "candidate_model_scores": candidate_scores,
+        "forecasts": forecasts,
     }

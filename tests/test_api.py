@@ -125,3 +125,59 @@ def test_api_simulate_endpoint(client):
     assert "StockWise Dynamic Quantile" in data["policies"]
     assert "Static Min-Max (s, S)" in data["policies"]
     assert "7-Day Moving Average Heuristic" in data["policies"]
+
+
+def test_api_segmentation_endpoint(client):
+    response = client.get("/segmentation?store_nbr=3")
+    assert response.status_code == 200
+    data = response.json()
+    assert "matrix_summary" in data
+    assert "items" in data
+    assert len(data["items"]) > 0
+    assert "segment" in data["items"][0]
+    assert "abc_class" in data["items"][0]
+
+
+def test_api_probabilistic_replenishment_endpoint(client):
+    payload = {
+        "store_nbr": 3,
+        "family": "BEVERAGES",
+        "on_hand": 50.0,
+        "on_order": 0.0,
+        "backorders": 0.0,
+        "review_period": 7,
+        "lead_time": 3,
+        "target_service_level": 0.95,
+    }
+    response = client.post("/probabilistic-replenishment", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert "stockout_probability_pct" in data
+    assert "expected_fill_rate_pct" in data
+    assert "reorder_point_s" in data
+    assert "risk_urgency_tier" in data
+
+
+def test_api_drift_audit_endpoint(client):
+    response = client.post("/drift-audit")
+    assert response.status_code == 200
+    data = response.json()
+    assert "overall_status" in data
+    assert "mean_psi_score" in data
+    assert "feature_details" in data
+
+
+def test_api_ensemble_forecast_endpoint(client):
+    payload = {
+        "store_nbr": 3,
+        "family": "BEVERAGES",
+        "horizon": 5,
+        "mode": "weighted_blend",
+    }
+    response = client.post("/ensemble-forecast", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert "candidate_model_scores" in data
+    assert "forecasts" in data
+    assert len(data["forecasts"]) == 5
+

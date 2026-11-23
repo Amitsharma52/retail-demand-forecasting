@@ -34,11 +34,10 @@ MODEL_Q50_PATH  = MODELS_DIR / "lgbm_q50.joblib"
 MODEL_Q90_PATH  = MODELS_DIR / "lgbm_q90.joblib"
 MODEL_META_PATH = MODELS_DIR / "model_meta.joblib"
 
-# ── Data subset (keep training tractable on 8 GB RAM) ────────────────────────
-# Set to None to use all stores / families.
-MAX_STORES      : int | None = 5          # number of stores to include
-MAX_FAMILIES    : int | None = 10         # number of product families to include
-MAX_TRAIN_ROWS  : int | None = 300_000   # hard cap on training rows
+# ── Full Favorita Dataset (All 54 stores, all 33 families, 2013-2017) ────────
+MAX_STORES      : int | None = None          # all 54 stores
+MAX_FAMILIES    : int | None = None          # all 33 product families
+MAX_TRAIN_ROWS  : int | None = None          # full timeline
 
 # ── Required columns ─────────────────────────────────────────────────────────
 REQUIRED_COLS = ["date", "store_nbr", "family", "sales", "onpromotion"]

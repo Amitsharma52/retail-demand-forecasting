@@ -80,19 +80,22 @@ def load_real_data() -> pd.DataFrame:
     log.info("Loaded items.csv — %d unique items", len(item_to_family))
 
     # Read train.csv in chunks and aggregate immediately to save RAM
-    CHUNK_SIZE = 500_000
-    ROW_LIMIT  = 5_000_000   # ~3.5 years of item-level data
-
+    CHUNK_SIZE = 1_000_000
     agg_chunks = []
     total_read = 0
     t0 = time.time()
 
-    log.info("Reading train.csv in chunks (target: %d item-level rows)…", ROW_LIMIT)
-    for chunk in pd.read_csv(config.RAW_DIR / "train.csv", chunksize=CHUNK_SIZE):
+    log.info("Reading FULL train.csv (all 125.5 million rows in 1M chunks)…")
+    for chunk in pd.read_csv(
+        config.RAW_DIR / "train.csv",
+        chunksize=CHUNK_SIZE,
+        usecols=["date", "store_nbr", "item_nbr", "unit_sales", "onpromotion"],
+        dtype={"store_nbr": "int16", "item_nbr": "int32", "unit_sales": "float32"},
+    ):
         chunk = chunk.rename(columns={"unit_sales": "sales"})
         chunk["sales"] = chunk["sales"].clip(lower=0)   # clip returns/negatives
         chunk["family"] = chunk["item_nbr"].map(item_to_family).fillna("OTHER")
-        chunk["onpromotion"] = chunk["onpromotion"].fillna(0).astype(int)
+        chunk["onpromotion"] = chunk["onpromotion"].fillna(0).astype("int16")
 
         agg = chunk.groupby(["date", "store_nbr", "family"], as_index=False).agg(
             sales=("sales", "sum"),
@@ -101,14 +104,20 @@ def load_real_data() -> pd.DataFrame:
         agg_chunks.append(agg)
         total_read += len(chunk)
 
-        if total_read % 1_000_000 == 0:
-            log.info("  Read %dM rows so far (%.0fs elapsed)…",
+        if total_read % 10_000_000 == 0:
+            log.info("  Processed %dM / 125.5M rows (%.1fs elapsed)…",
                      total_read // 1_000_000, time.time() - t0)
 
-        if total_read >= ROW_LIMIT:
-            break
+        # Intermediate compaction every 15 chunks to keep memory usage under 300MB
+        if len(agg_chunks) >= 15:
+            partial_df = pd.concat(agg_chunks, ignore_index=True)
+            partial_df = partial_df.groupby(["date", "store_nbr", "family"], as_index=False).agg(
+                sales=("sales", "sum"),
+                onpromotion=("onpromotion", "sum"),
+            )
+            agg_chunks = [partial_df]
 
-    log.info("Finished reading %d item-level rows in %.1fs", total_read, time.time() - t0)
+    log.info("Finished reading ALL %d item-level rows in %.1fs", total_read, time.time() - t0)
 
     # Merge all chunks and re-aggregate (chunks may overlap on same date/store/family)
     df_raw = pd.concat(agg_chunks, ignore_index=True)
@@ -149,12 +158,9 @@ def load_real_data() -> pd.DataFrame:
     df["transactions"] = df["transactions"].fillna(df["transactions"].median())
     log.info("Merged transactions.csv")
 
-    # ── Keep top 25 families by total sales ─────────────────────────────────
-    top_families = (
-        df.groupby("family")["sales"].sum().nlargest(25).index.tolist()
-    )
-    df = df[df["family"].isin(top_families)].copy()
-    log.info("Kept top %d families: %s", len(top_families), top_families)
+    # ── Include ALL 33 product families in Favorita ──────────────────────────
+    all_families = sorted(df["family"].unique().tolist())
+    log.info("Retained ALL %d product families in full dataset: %s", len(all_families), all_families)
 
     # ── Add sales_is_missing flag for validation ─────────────────────────────
     df["sales_is_missing"] = df["sales"].isna().astype(int)
@@ -169,7 +175,7 @@ def load_real_data() -> pd.DataFrame:
              df.family.nunique(),
              df.date.nunique())
 
-    return df
+    return df, total_read
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -229,16 +235,14 @@ def build_features_full(df: pd.DataFrame) -> pd.DataFrame:
 
     log.info("Lag features added (1, 7, 14, 21, 28, 56 days)")
 
-    # Rolling statistics (shift-1 so current day not included)
+    # Rolling statistics (shift-1 so current day not included, vectorized)
     for w in [7, 14, 30, 90]:
-        shifted = grp.shift(1)
-        rolled  = df.groupby(["store_nbr", "family"], sort=False).apply(
-            lambda g: g["sales"].shift(1).rolling(w, min_periods=1).mean()
-        ).reset_index(level=[0, 1], drop=True)
-        df[f"roll_mean_{w}"]  = rolled
-        df[f"roll_std_{w}"]   = df.groupby(["store_nbr", "family"], sort=False).apply(
-            lambda g: g["sales"].shift(1).rolling(w, min_periods=1).std()
-        ).reset_index(level=[0, 1], drop=True)
+        df[f"roll_mean_{w}"] = grp.transform(
+            lambda s: s.shift(1).rolling(w, min_periods=1).mean()
+        )
+        df[f"roll_std_{w}"] = grp.transform(
+            lambda s: s.shift(1).rolling(w, min_periods=1).std()
+        )
 
     log.info("Rolling mean/std features added (7, 14, 30, 90 days)")
 
@@ -395,6 +399,7 @@ def train_xgboost(X_train, y_train, X_val, y_val):
         mdl = XGBRegressor(
             objective="reg:quantileerror",
             quantile_alpha=alpha,
+            tree_method="hist",
             n_estimators=600, learning_rate=0.05,
             max_depth=6, subsample=0.8,
             colsample_bytree=0.8,
@@ -423,6 +428,7 @@ def train_catboost(X_train, y_train, X_val, y_val):
             loss_function=f"Quantile:alpha={alpha}",
             iterations=600, learning_rate=0.05,
             depth=6, subsample=0.8,
+            thread_count=-1,
             random_seed=42, verbose=0,
         )
         mdl.fit(X_train, y_train, eval_set=(X_val, y_val))
@@ -483,7 +489,7 @@ def main():
     config.MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
     # ── 1. Load data ──────────────────────────────────────────────────────────
-    df_raw = load_real_data()
+    df_raw, total_raw_rows = load_real_data()
 
     # ── 2. Build features ─────────────────────────────────────────────────────
     df, store_map, family_map = build_features_full(df_raw)
@@ -660,7 +666,7 @@ def main():
             "num_leaves": 63, "min_child_samples": 30,
         },
         "data_profile": {
-            "total_rows_read":   5_000_000,
+            "total_rows_read":   total_raw_rows,
             "aggregated_rows":   len(df),
             "date_min":          str(df.date.min().date()),
             "date_max":          str(df.date.max().date()),

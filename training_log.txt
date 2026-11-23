@@ -1,0 +1,132 @@
+15:26:24  INFO      ======================================================================
+15:26:24  INFO      STEP 1: Loading real Favorita dataset
+15:26:24  INFO      ======================================================================
+15:26:24  INFO      Loaded items.csv — 4100 unique items
+15:26:24  INFO      Reading train.csv in chunks (target: 5000000 item-level rows)…
+15:26:25  INFO        Read 1M rows so far (1s elapsed)…
+15:26:26  INFO        Read 2M rows so far (2s elapsed)…
+15:26:26  INFO        Read 3M rows so far (3s elapsed)…
+15:26:27  INFO        Read 4M rows so far (3s elapsed)…
+15:26:28  INFO        Read 5M rows so far (4s elapsed)…
+15:26:28  INFO      Finished reading 5000000 item-level rows in 4.2s
+15:26:28  INFO      Aggregated to 103485 store-family-day rows | date range: 2013-01-01 → 2013-05-01
+15:26:28  INFO      Merged stores.csv (city, state, type, cluster)
+15:26:28  INFO      Merged oil prices
+15:26:28  INFO      Added is_holiday flag (160 national holidays)
+15:26:28  INFO      Merged transactions.csv
+15:26:28  INFO      Kept top 22 families: ['GROCERY I', 'BEVERAGES', 'CLEANING', 'BREAD/BAKERY', 'DAIRY', 'MEATS', 'PERSONAL CARE', 'DELI', 'POULTRY', 'EGGS', 'PREPARED FOODS', 'FROZEN FOODS', 'LIQUOR,WINE,BEER', 'SEAFOOD', 'GROCERY II', 'LINGERIE', 'AUTOMOTIVE', 'LAWN AND GARDEN', 'BEAUTY', 'PRODUCE', 'HARDWARE', 'HOME APPLIANCES']
+15:26:28  INFO      Final preprocessed shape: (103485, 13)
+15:26:28  INFO      Stores: 46 | Families: 22 | Days: 121
+15:26:28  INFO      ======================================================================
+15:26:28  INFO      STEP 2: Building features
+15:26:28  INFO      ======================================================================
+15:26:28  INFO      Calendar features added
+15:26:28  INFO      Lag features added (1, 7, 14, 21, 28, 56 days)
+15:26:31  INFO      Rolling mean/std features added (7, 14, 30, 90 days)
+15:26:32  INFO      Advanced features added (EWMAs, oil momentum, promo, store/family means)
+15:26:32  INFO      Dropped 0 rows with NaN sales | remaining: 103485
+15:26:32  INFO      Saved processed parquet → C:\Users\sharm\.gemini\antigravity\scratch\retail-demand-system\data\processed\train_processed.parquet
+15:26:32  INFO      Feature count: 41
+15:26:32  INFO      Top features: ['onpromotion', 'cluster', 'oil_price', 'is_holiday', 'transactions', 'store_id', 'family_id', 'store_type', 'day_of_week', 'month', 'year', 'day_of_month', 'week_of_year', 'quarter', 'is_weekend', 'dow_sin', 'dow_cos', 'month_sin', 'month_cos', 'year_idx']
+15:26:33  INFO      Train: 81816 rows (2013-01-01 → 2013-04-06)
+15:26:33  INFO      Val:   21669 rows (2013-04-07 → 2013-05-01)
+15:26:33  INFO      
+======================================================================
+15:26:33  INFO      STEP 3: Training all models
+15:26:33  INFO      ======================================================================
+15:26:33  INFO      Train rows: 81816 | Val rows: 21669 | Features: 41
+15:26:33  INFO      
+--- Seasonal Naive Baseline ---
+15:26:33  INFO      
+--- LightGBM ---
+15:26:45  INFO        LightGBM q10…
+15:26:52  INFO        LightGBM q50…
+15:26:57  INFO        LightGBM q90…
+15:27:04  INFO        LightGBM trained in 18.4s
+15:27:05  INFO      Saved LightGBM models
+15:27:05  INFO      
+--- XGBoost ---
+15:27:06  INFO        XGBoost q10…
+15:27:13  INFO        XGBoost q50…
+15:27:19  INFO        XGBoost q90…
+15:27:25  INFO        XGBoost trained in 19.4s
+15:27:26  INFO      Saved XGBoost models
+15:27:26  INFO      
+--- CatBoost ---
+15:27:29  INFO        CatBoost q10…
+15:27:37  INFO        CatBoost q50…
+15:27:46  INFO        CatBoost q90…
+15:27:54  INFO        CatBoost trained in 25.2s
+15:27:54  INFO      Saved CatBoost models
+15:27:54  INFO      
+======================================================================
+15:27:54  INFO      STEP 4: Evaluation on Validation Set
+15:27:54  INFO      ======================================================================
+15:27:54  INFO      
+--- Hybrid Ensemble ---
+15:27:54  INFO      Ensemble weights: {'lightgbm': '0.3462', 'xgboost': '0.3278', 'catboost': '0.3260'}
+15:27:54  INFO      
+======================================================================
+15:27:54  INFO      MODEL COMPARISON RESULTS (Validation Set)
+15:27:54  INFO      ======================================================================
+15:27:54  INFO      
+              MAE      RMSE  WAPE_%   PB_Q10   PB_Q50   PB_Q90  Coverage_80%
+model                                                                       
+naive     65.4053  248.1926   16.01  14.7277  32.7027  19.5076         58.59
+lightgbm  44.6734  179.2905   10.93   9.2884  22.3367  13.3068         76.23
+xgboost   47.1704  186.0109   11.54   9.6836  23.5852  13.8970         83.65
+catboost  47.4403  185.1553   11.61   9.7798  23.7201  14.2113         74.98
+ensemble  44.4346  179.6866   10.87   9.1268  22.2173  13.1821         81.88
+15:27:54  INFO      
+Best model by WAPE: ensemble (WAPE=10.87%)
+15:27:54  INFO      
+======================================================================
+15:27:54  INFO      STEP 5: SHAP Feature Importance
+15:27:54  INFO      ======================================================================
+15:28:03  INFO      Top 15 features by SHAP importance:
+15:28:03  INFO      
+          feature  mean_|SHAP|
+            lag_1   118.580750
+            lag_7    73.730445
+     roll_mean_90    67.532734
+     roll_mean_30    66.655673
+      roll_mean_7    54.745342
+family_mean_sales    39.403398
+           lag_14    32.961264
+     transactions    31.247576
+     roll_mean_14    28.302098
+      day_of_week    18.468222
+           lag_28    18.091885
+          ewma_28    18.009178
+     day_of_month    10.997215
+    oil_7d_change     4.740667
+           lag_56     4.670474
+15:28:03  INFO      Saved SHAP importance → reports/shap_feature_importance.csv
+15:28:03  INFO      
+======================================================================
+15:28:03  INFO      STEP 6: Saving unified model metadata
+15:28:03  INFO      ======================================================================
+15:28:04  INFO      Saved model metadata → C:\Users\sharm\.gemini\antigravity\scratch\retail-demand-system\models\model_meta.joblib
+15:28:04  INFO      Saved validation predictions and model comparison → reports/
+15:28:04  INFO      
+======================================================================
+15:28:04  INFO      TRAINING COMPLETE in 1.7 minutes
+15:28:04  INFO      ======================================================================
+15:28:04  INFO      
+Model Performance Summary:
+15:28:04  INFO        NAIVE         MAE=  65.41  RMSE= 248.19  WAPE=16.01%  PB_Q50=32.7027  Coverage= 58.6%
+15:28:04  INFO        LIGHTGBM      MAE=  44.67  RMSE= 179.29  WAPE=10.93%  PB_Q50=22.3367  Coverage= 76.2%
+15:28:04  INFO        XGBOOST       MAE=  47.17  RMSE= 186.01  WAPE=11.54%  PB_Q50=23.5852  Coverage= 83.7%
+15:28:04  INFO        CATBOOST      MAE=  47.44  RMSE= 185.16  WAPE=11.61%  PB_Q50=23.7201  Coverage= 75.0%
+15:28:04  INFO        ENSEMBLE      MAE=  44.43  RMSE= 179.69  WAPE=10.87%  PB_Q50=22.2173  Coverage= 81.9%
+15:28:04  INFO      
+Best model: ENSEMBLE (WAPE=10.87%)
+15:28:04  INFO      
+All artifacts saved to:
+15:28:04  INFO        models/                     — trained model files
+15:28:04  INFO        data/processed/             — preprocessed parquet
+15:28:04  INFO        reports/                    — evaluation metrics & predictions
+15:28:04  INFO        training_log.txt            — full training log
+15:28:04  INFO      
+To launch the dashboard: streamlit run app.py
+15:28:04  INFO      To launch the API:        uvicorn api:app --port 8000

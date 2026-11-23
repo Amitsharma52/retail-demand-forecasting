@@ -2,7 +2,7 @@
 
 > **Commercial-Grade Enterprise Retail Decision-Support Product & B.Tech Capstone Project**  
 > **Dataset**: [Corporación Favorita Store Sales — Time Series Forecasting](https://www.kaggle.com/competitions/store-sales-time-series-forecasting/data) & Custom Merchant POS Uploads  
-> **Architecture**: LightGBM/XGBoost Quantile Ensembles + Conformal Prediction (CQR) + Multi-Echelon Inventory Engine + FastAPI REST Microservice + Streamlit Command Center
+> **Architecture**: LightGBM/XGBoost/CatBoost Quantile Ensembles + Conformal Prediction (CQR) + Multi-Echelon & Probabilistic Inventory Engine + ABC-XYZ Portfolio Segmentation + Statistical Drift Monitor + FastAPI REST Microservice + Streamlit Command Center
 
 ---
 
@@ -82,16 +82,19 @@ Retailers and grocery chains face two interrelated operational bottlenecks:
 | :--- | :--- | :---: |
 | **Real Data Ingestion** | Corporación Favorita processed parquet pipeline with fallback to demo generator | ✅ Complete |
 | **Custom Merchant POS Ingestion** | Fuzzy column matching, daily calendar regularization, missing gap-filling, and health audits | ✅ Complete |
-| **Quantile Forecasting** | LightGBM Q10, Q50, Q90 Pinball objective with post-prediction monotonicity enforcement | ✅ Complete |
-| **Multi-Model Benchmarking** | LightGBM vs. XGBoost vs. Seasonal Naive vs. Rolling Average across walk-forward folds | ✅ Complete |
+| **Quantile Forecasting** | LightGBM, XGBoost, and CatBoost Q10, Q50, Q90 Pinball objective with post-prediction monotonicity enforcement | ✅ Complete |
+| **Hybrid Validation-Weighted Ensemble** | Dynamic inverse-loss weighting combining LightGBM, XGBoost, CatBoost, and Seasonal Naive | ✅ Complete |
+| **Automated Feature Selection & Pruning**| Variance thresholding, Pearson collinearity filtering, and Tree feature importance ranking | ✅ Complete |
 | **Conformal Prediction (CQR)** | Romano et al. (2019) non-conformity calibration guaranteeing finite-sample coverage | ✅ Complete |
-| **Multi-Echelon Inventory Logic** | Protection horizon $H = R + L$, normal-quantile safety stock, order-up-to target $S$ | ✅ Complete |
+| **Probabilistic Tail-Risk Replenishment** | Exact normal loss functions for $E[\text{Shortage}]$, $E[\text{Excess}]$, $P(\text{Stockout})$, and dynamic $(s, S)$ policies | ✅ Complete |
+| **ABC-XYZ Portfolio Segmentation** | 9-Box classification matrix combining Pareto revenue velocity and demand coefficient of variation ($CV$) | ✅ Complete |
+| **Statistical Drift Monitoring** | Population Stability Index (PSI), 2-sample Kolmogorov-Smirnov (KS) test, and rolling Tracking Signal | ✅ Complete |
 | **Commercial Purchase Orders** | Master case-pack rounding, MOQ enforcement, total valuation, ReportLab PDF and CSV | ✅ Complete |
 | **Financial Policy Backtesting** | Daily discrete-event simulator: fill rates, stockout frequency, holding costs, net profit | ✅ Complete |
 | **Explainable AI (TreeSHAP)** | Global feature importance, local single-day attribution waterfall, plain-language text rationale | ✅ Complete |
-| **Production REST API** | FastAPI microservice (`api.py`) with Pydantic v2 schemas for ERP/POS integration | ✅ Complete |
-| **Web Command Center** | Streamlit UI (`app.py`) with 8 operational pages styled in accessible enterprise theme | ✅ Complete |
-| **Automated PyTest Suite** | Comprehensive unit & integration testing across all modules (**77 / 77 passing, 100%**) | ✅ Complete |
+| **Production REST API** | FastAPI microservice (`api.py`) with 7 Pydantic v2 endpoints for ERP/POS integration | ✅ Complete |
+| **Web Command Center** | Streamlit UI (`app.py`) with 10 operational pages styled in accessible enterprise theme | ✅ Complete |
+| **Automated PyTest Suite** | Comprehensive unit & integration testing across all modules (**95 / 95 passing, 100%**) | ✅ Complete |
 
 ---
 
